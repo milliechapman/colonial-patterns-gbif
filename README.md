@@ -1,1 +1,7 @@
-# colonial-patterns-gbif
+# Beyond spatial bias: Understanding the colonial legacies and contemporary social forces shaping biodiversity data
+
+Repository for analyses in Faxon, H., & Chapman, M. (2025). *Environmental Research Letters.* DOI: 10.1088/1748-9326/add6b6
+
+**Abstract:**: With over 2 billion observations of species from across the earth, the Global Biodiversity Information Facility (GBIF) has become an influential repository of information for not only ecologists, but also conservation scientists and policy makers. Yet biodiversity data reveal more than species distributions. They reflect colonial histories, economic inequities, and cultural differences. This article argues for moving beyond ideas of "spatial bias" in conservation science to highlight the colonial legacies and contemporary social forces that shape biodiversity data. Drawing on interviews with the GBIF staff and data publishers as well as critical mapping of GBIF data patterns, we visualize and analyze how and why colonial patterns persist and shift in this global biodiversity data. To explain diverse trajectories of postcolonial production of data, we identify three social forces–colonial legacies of collecting, infrastructures of international development, and contemporary data cultures–that structure biodiversity observation distributions and data ownership and availability. Together, these findings demonstrate how, even in the age of open access, colonial and postcolonial practices and politics continue to shape what we know about the natural world.
+
+
