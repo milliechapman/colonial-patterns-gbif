@@ -13,9 +13,9 @@ knitr::opts_chunk$set(
 )
 ```
 
-We use the following packages:
+### Packages
 
-```{r}
+```{r echo = FALSE}
 library(ggthemes)
 library(geomtextpath)
 library(gbifdb) 
@@ -34,319 +34,112 @@ library(scales)
 library(rnaturalearth)
 library(rnaturalearthdata)
 library(countrycode)
+library(raster)
 library(dplyr)
 library(duckdbfs)
 #devtools::install_github("vdeminstitute/vdemdata")
 #library(vdem)
 ```
 
+### Connect to GBIF
+
 ```{r}
 # we use a local copy of the 2024-10-01 snapshop of GBIF to improve the speed of the code of GBIF but this is openly accessible data
+#gbif <- open_dataset("s3://public-gbif/2024-10-01")
+```
+
+```{r}
+duckdb_s3_config(s3_endpoint = "minio.carlboettiger.info") 
 gbif <- open_dataset("s3://public-gbif/2024-10-01")
 ```
 
 ```{r}
-country_year_type <-  gbif |>
-    count(basisofrecord, countrycode, year) |>
-    collect()
-
-Figure_1c <- country_year_type |> 
-  filter(year > 1900 & year <2023) |>
-  mutate(basisofrecord = ifelse(basisofrecord %in% c("FOSSIL_SPECIMEN", "LIVING_SPECIMEN", 
-                                                     "PRESERVED_SPECIMEN", "MATERIAL_SAMPLE", "MATERIAL_CITATION"), 
-                                "MATERIAL SPECIMEN/SAMPLE",
-                                ifelse(basisofrecord %in% c("HUMAN_OBSERVATION"), 
-                                "HUMAN OBSERVATION", "MACHINE OBSERVATION"))
-         ) |>
-  group_by(year, basisofrecord) |> summarise(n =sum(n)) |>
-  ggplot(aes(x= year, y = n, color = basisofrecord)) + 
-  scale_color_manual(values=met.brewer("Isfahan1", 3)) + geom_line() + theme_classic()+ labs(y = "number of observations") + theme(legend.title = element_blank(), legend.position = c(0.4,0.8)) 
-
-ggsave("plots/modalities-line.png", Figure_1c, width = 4, height = 3, dpi = 300)
-```
-
-```{r}
-country_year_dk <-  gbif |>
+country_year_summary_dk <- gbif |> 
     count(countrycode, year, datasetkey) |>
     collect()
 ```
 
 ```{r}
 orgs <- read_tsv("https://api.gbif.org/v1/dataset/search/export?format=TSV&") |>
-  dplyr::select(publishing_country, dataset_key, title, type, hosting_organization_title,
-                hosting_country, occurrence_records_count, endorsing_node_key) |>
-  rename(datasetkey = dataset_key) |>
-  mutate(CS = ifelse(datasetkey %in% c("4fa7b334-ce0d-4e88-aaae-2e0c138d049e", "50c9509d-22c7-4a22-a47d-8c48425ef4a7"), "citizen_science", "other"))
-
+  dplyr::select(publishing_country, dataset_key) |>
+  rename(datasetkey = dataset_key) 
 ```
 
 ```{r}
-vdem <- read_csv("../data/V-Dem-CY-Core-v15_csv/V-Dem-CY-Core-v12.csv") |> dplyr::select(country_text_id, year, v2x_regime, v2x_freexp,v2xcl_dmove)
-vdem_select <- vdem |> dplyr::select(country_text_id,year, v2x_freexp,v2xcl_dmove, v2x_regime) |>
-  mutate(countrycode = countrycode(country_text_id, origin = "iso3c", destination = "iso2c")) |> dplyr::select(-country_text_id)
-
-a <- country_year_summary |>
-  left_join(vdem_select) |> filter(year >1900) |> drop_na() |>
-  group_by(countrycode, year) |> summarise(n = sum(n),
-                                        v2x_freexp = mean(v2x_freexp),
-                                        v2xcl_dmove = mean(v2xcl_dmove),
-                                        v2x_regime = mean(v2x_regime)) |>
-    mutate(v2x_regime = as.factor(v2x_regime),
-          v2x_regime = recode(v2x_regime,"0" = "Closed autocracy", "1" = "Electoral autocracy", "2"= "Electoral democracy", "3"= "Liberal democracy")) %>%
-  ggplot(aes(x = v2x_freexp, y = log(n), color = v2x_regime)) + geom_point(alpha = 0.2) +
-   geom_smooth(method = "loess", color = "black", se = FALSE) +
-    scale_color_manual(values=met.brewer("Egypt", 4)) +
-  theme_classic() +
-  labs(x = "freedom of expression")
-
-
-country_year_summary |>
-  left_join(vdem_select) |> filter(year >1900) |> drop_na() |>
-  group_by(countrycode, year) |> summarise(n = sum(n),
-                                        v2x_freexp = mean(v2x_freexp),
-                                        v2xcl_dmove = mean(v2xcl_dmove),
-                                        v2x_regime = mean(v2x_regime)) |>
-    mutate(v2x_regime = as.factor(v2x_regime),
-          v2x_regime = recode(v2x_regime,"0" = "Closed autocracy", "1" = "Electoral autocracy", "2"= "Electoral democracy", "3"= "Liberal democracy")) %>%
-  group_by(countrycode, v2x_regime) |> count() |>group_by(countrycode) |> mutate(regimes = n()) |>
-  arrange(-regimes)
-
-
-
-# ---- SCATTER PLOT ----
-scatter_plot <- country_year_summary |>
-  left_join(vdem_select) |> filter(year >1900) |> drop_na() |>
-  group_by(countrycode, year) |> summarise(n = sum(n),
-                                        v2x_freexp = mean(v2x_freexp),
-                                        v2xcl_dmove = mean(v2xcl_dmove),
-                                        v2x_regime = mean(v2x_regime)) |>
-    mutate(v2x_regime = as.factor(v2x_regime),
-          v2x_regime = recode(v2x_regime,"0" = "Closed autocracy", "1" = "Electoral autocracy", "2"= "Electoral democracy", "3"= "Liberal democracy")) |>
-  ggplot(aes(x = v2x_freexp, y = log(n), color = year)) +
-  geom_point(alpha = 0.4, size = 2) + 
-  geom_smooth(method = "loess", color = "black", se = FALSE) +
-  scale_color_viridis_c(option = "magma") + 
-  theme_bw() +
-  labs(
-    x = "Freedom of Expression Index",
-    y = "log(# observations)",
-    color = "Year",
-  ) + scale_x_continuous(
-    breaks = function(x) pretty(x, n = 5), 
-    labels = function(x) ifelse(x == 0, "0", sprintf("%.1f", x))
-  ) +
-  facet_wrap(~v2x_regime, ncol = 4)
-ggsave("plots/fe_scatter.png", scatter_plot, dpi = 300, width = 8, height = 3.5)
-# ---- WORLD MAP PANEL ----
-# Load world map and merge with data
-world_map <- ne_countries(scale = "medium", returnclass = "sf") |>
-  dplyr::select(iso_a2, geometry)
-freedom_map <-country_year_summary |>
-  left_join(vdem_select) |> filter(year >1900) |> drop_na() |>
-  group_by(countrycode, year) |> summarise(n = sum(n),
-                                        v2x_freexp = mean(v2x_freexp),
-                                        v2xcl_dmove = mean(v2xcl_dmove),
-                                        v2x_regime = mean(v2x_regime)) |>
-    mutate(v2x_regime = as.factor(v2x_regime),
-          v2x_regime = recode(v2x_regime,"0" = "Closed autocracy", "1" = "Electoral autocracy", "2"= "Electoral democracy", "3"= "Liberal democracy")) |>
-  group_by(countrycode, v2x_regime) |> 
-  summarise(v2x_freexp = mean(v2x_freexp, na.rm = TRUE)) |> 
-  left_join(world_map, by = c("countrycode" = "iso_a2"))
-
-# Create map plot
-map_plot <- ggplot(freedom_map) +
-  geom_sf(aes(geometry = geometry, fill = v2x_freexp), color = "grey50", size = 0.2) +
-  scale_fill_viridis_c(option = "plasma", na.value = "grey80") +
-  theme_minimal() +
-  labs(
-    fill = "Freedom of Expression",
-    title = "Mean Freedom of Expression by Country"
-  )
-
-# ---- COMBINE PLOTS ----
-library(patchwork) # For combining plots
-combined_plot <- scatter_plot + map_plot + plot_layout(ncol = 2)
-print(combined_plot)
-
-  
+country_year_summary <- country_year_summary_dk |> left_join(orgs) |> dplyr::select(-datasetkey)
 ```
+
+### Figure 1
+
+Panel A - GBIF
 
 ```{r}
-country_year_summary |> mutate(GB = ifelse(publishing_country == "GB", T, F)) |>
-  group_by(GB) |> summarise(n = sum(n, na.rm = T))
+df <- gbif |> 
+  mutate(latitude = round(decimallatitude,2), 
+         longitude = round(decimallongitude,2)) |> 
+  #filter(year >1800) |>
+  count(longitude, latitude) |> 
+  collect()
 
-country_year_summary |> mutate(GB = ifelse(countrycode == "GB", T, F)) |>
-  group_by(GB) |> summarise(n = sum(n, na.rm = T))
+df_spatial <- df |> 
+  filter(!is.na(latitude), 
+         !is.na(longitude)) |> 
+  st_as_sf(coords = c("longitude", "latitude"), 
+           crs = "+proj=robin +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m")
 
-134383706/(2473052193+134383706)
-121892027/(2446344879+121892027)
+write_csv(df, "spatial.csv")
 
-country_year_summary |> filter(publishing_country == "NL") |> distinct(countrycode)
-```
+ras_temp <-raster(xmn=-180, xmx=180, ymn=-90, ymx=90,
+                  resolution=c(0.1,0.1), vals=NA)
+global_plot_all <- rasterize(df_spatial, ras_temp, 
+                         field = "n", fun='sum') 
+rm(ras_temp) #remove unnecessary data
 
-```{r}
-oecd_obs <- data.frame(
-  countrycode = c("AU", "AT", "BE", "CA", "CL", "CO", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", 
-           "HU", "IS", "IE", "IL", "IT", "JP", "KR", "LV", "LT", "LU", "MX", "NL", "NZ", 
-           "NO", "PL", "PT", "SK", "SI", "ES", "SE", "CH", "TR", "GB", "US"),
-  oecd_obs = "oecd"
-)
-oecd_pub <- data.frame(
-  publishing_country = c("AU", "AT", "BE", "CA", "CL", "CO", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", 
-           "HU", "IS", "IE", "IL", "IT", "JP", "KR", "LV", "LT", "LU", "MX", "NL", "NZ", 
-           "NO", "PL", "PT", "SK", "SI", "ES", "SE", "CH", "TR", "GB", "US"),
-  oecd_pub = "oecd"
-)
-
-
-country_year_oecd <- country_year_summary |> left_join(oecd_obs) |> left_join(oecd_pub) |>
-  mutate(oecd_pub = replace_na(oecd_pub, "non-oecd"),
-         oecd_obs = replace_na(oecd_obs, "non-oecd"))
-
-line_oecd <- country_year_oecd |> group_by(oecd_pub, oecd_obs, year) |> summarise(n = sum(n, na.rm = T)) |> filter(year >1900 & year <2023) |>
-  ggplot(aes(x = year, y =  n, color = oecd_pub, linetype = oecd_obs)) + geom_line() + scale_color_brewer(palette = "Set1") +  # Use a colorblind-friendly palette
-  scale_linetype_manual(values = c("dashed", "solid")) +  # Ensure clear distinction
-  theme_classic() +
-  labs(x = "year", y = "number of observations", color = "publication location", linetype = "observation location")  +
-  theme(
-    legend.position = c(0.3,0.6),
-    legend.box = "rect",   # Adds a box around the legend
-    legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5),  # Box with black border
-    legend.margin = margin(5, 5, 5, 5)  # Add some spacing
-  )
-
-ggsave("plots/line_oecd.png", line_oecd, width = 4, height = 4, dpi = 300)
-```
-
-```{r}
-# Load world map and transform to Robinson projection
-world <- ne_countries(scale = "medium", returnclass = "sf") |> 
-  st_transform(crs = "+proj=robin")  
-
-# List of OECD countries (ISO 2-letter codes)
-oecd_countries <- c("AU", "AT", "BE", "CA", "CL", "CO", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", 
-                    "IS", "IE", "IL", "IT", "JP", "KR", "LV", "LT", "LU", "MX", "NL", "NZ", "NO", "PL",
-                    "PT", "SK", "SI", "ES", "SE", "CH", "TR", "GB", "US")
-
-gbif_nodes <- read_csv("Updated_Country_List_with_ISO_A2.csv")
-
-# Assign OECD status
-gbif_nodes <- gbif_nodes %>%
-  mutate(OECD_Status = ifelse(ISO_A2 %in% oecd_countries, "OECD", "Non-OECD"))
-
-# Get coordinates of country centroids
-world_centroids <- world %>%
-  st_centroid() %>%
-  mutate(longitude = st_coordinates(.)[,1], latitude = st_coordinates(.)[,2]) %>%
-  select(iso_a2, longitude, latitude)
-
-# Merge GBIF nodes with coordinates
-gbif_nodes <- gbif_nodes %>% rename(iso_a2 = ISO_A2) |>
-  left_join(world_centroids)
-
-# Plot the map
-ggplot() +
-  geom_sf(data = world, fill = "gray90", color = "white") +  # Base world map
-  geom_point(data = gbif_nodes, aes(x = longitude, y = latitude, color = OECD_Status, shape = Membership), 
-             size = 2, alpha = 0.9) +  
-  scale_color_brewer(palette = "Set1") +# GBIF Nodes
-  #scale_color_manual(values = c("OECD" = "blue", "Non-OECD" = "red")) +  # Colors
-  labs(
-       x = "", y = "", color = "") +
-  theme_map() +
-  theme(legend.position = "bottom",
-        legend.box = "rect",
-        legend.background = element_rect(fill = "white", color = "black"),
-        panel.grid = element_blank())
-
-```
-
-```{r}
-# Load necessary libraries
-library(ggplot2)
-library(dplyr)
-library(sf)
-library(rnaturalearth)
-library(rnaturalearthdata)
-
-# Load GBIF nodes data
-gbif_nodes <- read.csv("https://hosted-datasets.gbif.org/node/gbif-nodes.csv")  # Get latest GBIF nodes
-gbif_nodes <- gbif_nodes |> rename(country = countryCode)  # Standardize country column
-
-# Load OECD country list
-oecd_countries <- c("AUS", "AUT", "BEL", "CAN", "CHL", "COL", "CZE", "DNK", "EST", "FIN", "FRA", "DEU", "GRC", "HUN",
-                    "ISL", "IRL", "ISR", "ITA", "JPN", "KOR", "LVA", "LTU", "LUX", "MEX", "NLD", "NZL", "NOR", "POL",
-                    "PRT", "SVK", "SVN", "ESP", "SWE", "CHE", "TUR", "GBR", "USA")
-
-# Classify GBIF nodes by OECD membership
-gbif_nodes <- gbif_nodes |> 
-  mutate(oecd_status = ifelse(country %in% oecd_countries, "OECD", "Non-OECD"))
-
-# Load world map data
-world <- ne_countries(scale = "medium", returnclass = "sf")
-
-# Create map
-ggplot() +
-  geom_sf(data = world, fill = "gray90", color = "white") +  # Base map
-  geom_point(data = gbif_nodes, aes(x = longitude, y = latitude, color = oecd_status), 
-             size = 3, alpha = 0.8) +  # Plot GBIF nodes
-  scale_color_manual(values = c("OECD" = "blue", "Non-OECD" = "red")) +  # Color by OECD status
-  labs(title = "GBIF Nodes by OECD Membership",
-       subtitle = "Blue: OECD Countries | Red: Non-OECD",
-       x = "Longitude", y = "Latitude", color = "OECD Status") +
-  theme_minimal() +
-  theme(legend.position = "bottom",
-        legend.box = "rect",
-        legend.background = element_rect(fill = "white", color = "black"),
-        panel.grid = element_blank())  # Clean grid for better readability
-```
-
-```{r global_plot, cache=TRUE}
 crs <- "+proj=robin +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m" 
-global_plot_all <- terra::rast("data/IUCN_Richness/Combined_SR_2024.tif") 
+global_plot_all <- terra::rast(global_plot_all) 
+global_plot <- global_plot_all * 1 # to deal with NAs in this dataset 
+# reproject for viz
+global_plot_r <- terra::project(global_plot, crs, mask=TRUE) 
+# define color gradient
+colors <- c("grey", met.brewer(name="Isfahan1",n=20,type="continuous"))
+# take log for viz
+terra::plot(log(global_plot_r,10), col = colors, axes = FALSE)
+writeRaster(global_plot_r, "../figures/Fig1A_data.tif", overwrite=TRUE)
+
+svg("../figures/Fig1A.svg")
+terra::plot(log(global_plot_r,10), col = colors, axes = FALSE)
+dev.off()
+
+```
+
+Panel B – IUCN
+
+```{r}
+crs <- "+proj=robin +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m" 
+global_plot_all <- terra::rast("../data/Combined_SR_2024.tif") 
 global_plot_all <- project(global_plot_all, crs)
 #global_plot <- global_plot_all * 1 # to deal with NAs in this dataset 
 # reproject for viz
 # define color gradient
-colors <- c("grey", met.brewer(name="Isfahan1",n=20,type="continuous"))
+colors <- c(met.brewer(name="Isfahan1",n=20,type="continuous"))
 # take log for viz
 terra::plot(global_plot_all, col = colors, axes = FALSE)
-writeRaster(global_plot_r, "../data/panels/PanelA_data.tif", overwrite=TRUE)
-```
 
-```{r global_plot_svg, eval = FALSE, include = FALSE}
-svg("../data/panels/panelA.svg")
-terra::plot(log(global_plot_r,10), col = colors, axes = FALSE)
+svg("../figures/Fig1B.svg")
+terra::plot(global_plot_r, col = colors, axes = FALSE)
 dev.off()
 ```
 
-```{r fig.width=3, fig.height=3}
-country_year_summary |> group_by(year, CS) |> summarise(n = sum(n)) |>
-  filter(year >1900 & year <2022) |> drop_na() |>
-  ggplot(aes(x = year, y = n, color = CS)) + geom_line() + theme_classic() +
-  ylab("annual number of observations") + theme(axis.title.x = element_blank(),
-                                                legend.title = element_blank(),
-                                                legend.position = c(0.4,0.6))
-```
+### Figure 2
 
 ```{r}
-write_csv(country_year_summary, "data/colonial/country_year_summary.csv")
-country_year_summary <- read_csv("data/colonial/country_year_summary.csv")
-```
-
-data from: [https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/T9SDEW](#0){.uri}
-
-```{r}
-colonial_countries <- read_csv("COLDAT_colonies.csv")[,1:9] |>
+colonial_countries <- read_csv("../data/COLDAT_colonies.csv")[,1:9] |>
   pivot_longer(-country) |>
   group_by(country) |>
   summarise(value = sum(value)) |>
   filter(value >0)
 
-```
-
-```{r}
-colonial_ties <- read_csv("COLDAT_colonies.csv") |>
+colonial_ties <- read_csv("../data/COLDAT_colonies.csv") |>
   pivot_longer(-c(country, colstart.belgium_max:colend.spain_mean)) |>
     filter(value == 1) |>
   mutate(start = case_when(name ==  "col.britain" ~ colstart.britain_max,
@@ -386,201 +179,10 @@ colonial_ties <- read_csv("COLDAT_colonies.csv") |>
   mutate(name = ifelse(year < end, colonizer, colonizer)) |>
   dplyr::select(-c(country, colonizer, start) )
 
-colonial_ties
-
-write_csv(colonial_ties, "data/colonial/colonial_ties.csv")
+write_csv(colonial_ties, "../data/colonial_ties.csv")
 ```
 
-```{r}
-values=met.brewer("Isfahan1", 3)
-colonial_countries <- unique(colonial_ties$countrycode) 
-colonial_line <- country_year_summary |> filter(countrycode %in% colonial_countries) |>
-  filter(CS == "other") |>
-  filter(countrycode != "US") |>
-  left_join(colonial_ties) |> 
-  mutate(analysis = ifelse(name == publishing_country , "Colonial",
-                                ifelse(countrycode == publishing_country, "InCountry",
-                                  "other"))) |>
-  mutate(analysis = replace_na(analysis, "other")) |>
-  # mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
-  # group_by(analysis, countrycode, colonial_dates, year) |>
-  # summarize(n = sum(n)) |>
-  # pivot_wider(names_from = analysis, values_from = n) |>
-  # mutate(
-  #   across(everything(), ~replace_na(.x, 0))
-  # ) |>
-  group_by(year, analysis) |>
-  summarise(n = sum(n, na.rm = T)) |> filter(year >1900 & year <2023) |>
-  group_by(year) |> mutate(total = sum(n)) |>
- # pivot_longer(-year) |> filter(name %in% c("colonial_perc","country_perc", "other_perc")) |>
-  ggplot(aes(x = year, y = n/total, color = analysis)) + geom_line() +
-  theme_classic() + scale_y_continuous(labels = scales::percent) +
-  labs(y = "% of global observations")
-
-colonial_line_all <- country_year_summary |> filter(countrycode %in% colonial_countries) |>
-  filter(CS == "other") |>
-  #filter(countrycode != "US") |>
-  left_join(colonial_ties) |> 
-  mutate(analysis = ifelse(name == publishing_country , "Colonial",
-                                ifelse(countrycode == publishing_country, "InCountry",
-                                  "other"))) |>
-  mutate(analysis = replace_na(analysis, "other")) |>
-  # mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
-  # group_by(analysis, countrycode, colonial_dates, year) |>
-  # summarize(n = sum(n)) |>
-  # pivot_wider(names_from = analysis, values_from = n) |>
-  # mutate(
-  #   across(everything(), ~replace_na(.x, 0))
-  # ) |>
-  group_by(year, analysis) |>
-  summarise(n = sum(n, na.rm = T)) |> filter(year >1900 & year <2023) |>
-  group_by(year) |> mutate(total = sum(n)) |>
- # pivot_longer(-year) |> filter(name %in% c("colonial_perc","country_perc", "other_perc")) |>
-  ggplot(aes(x = year, y = n/total, color = analysis)) + geom_line() +
-  theme_classic() + scale_y_continuous(labels = scales::percent) +
-  labs(y = "% of global observations")
-
-ggsave("plots/colonial-line.png",colonial_line, width = 4, height = 3, dpi = 400 )
-```
-
-```{r}
-colonial_map <- country_year_summary |> left_join(colonial_ties) |> drop_na() |>
-  mutate(analysis = ifelse(name == publishing_country , "Colonial",
-                                ifelse(countrycode == publishing_country, "InCountry",
-                                  "other"))) |>
-  mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
-  group_by(analysis, countrycode, colonial_dates, CS, year) |>
-  summarize(n = sum(n)) |>
-  pivot_wider(names_from = analysis, values_from = n) |>
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  ) |>
-  group_by(year, CS, colonial_dates, countrycode) |>
-  summarise( Colonial = sum(Colonial, na.rm = T),
-            InCountry= sum(InCountry, na.rm = T),
-            other = sum(other, na.rm = T),
-            total = Colonial+InCountry+other)
-```
-
-```{r}
-colonial_map |> mutate(a = "group") |>
-  group_by(a) |> summarise(colonial = sum(Colonial),
-                           other = sum(InCountry) + sum(other))
-```
-
-```{r}
-countries_to_plot <- colonial_map |> #filter(CS == "other") |>
-  group_by(countrycode, colonial_dates) |>
-  summarise(Colonial = sum(Colonial, na.rm = T),
-            InCountry= sum(InCountry, na.rm = T),
-            other = sum(other, na.rm = T),
-            total = Colonial+InCountry+other) |>
-  mutate(perc_incountry = InCountry/total) |>
-  mutate(perc_colonial = Colonial/total) |>
-  mutate(perc_other = other/total) |> 
-  filter(colonial_dates == "colonial") |>
-  arrange(-perc_colonial) |> head(25)
-```
-
-```{r}
-unique(colonial_map$countrycode)
-figure2b <- colonial_map |> filter(countrycode %in% c("CD", "RW")) |>
-  group_by(countrycode, colonial_dates) |>
-  summarise( Colonial = sum(Colonial, na.rm = T),
-            InCountry= sum(InCountry, na.rm = T),
-            other = sum(other, na.rm = T)) |>
-  mutate(perc_incountry = InCountry/(InCountry+other+Colonial)) |>
-  mutate(perc_colonial = Colonial/(InCountry+other+Colonial)) |>
-  mutate(perc_other = other/(InCountry+other+Colonial)) |>
-  pivot_longer(c(perc_incountry:perc_other)) |>
-  mutate(value = value*100) |>
-  ggplot(aes( y = value,x = colonial_dates, fill = name)) +
-  geom_col(position = "dodge") + theme_classic() +
-  labs(y = "percent of observations", x = "") +
-  scale_alpha_manual(values = c(0.3, 1)) +
-  scale_fill_manual(values = c("darkblue",  "#E69F00", "lightgrey")) +
-  facet_grid(rows = vars(countrycode))
-
-ggsave("plots/be_colonies.png", figure2b, height = 4, width = 4, dpi = 300)
-```
-
-```{r}
-colonial_map |>  #filter(CS == "other") |>
-  filter(countrycode %in% countries_to_plot$countrycode) |>
-  group_by(countrycode, colonial_dates) |>
-  summarise( Colonial = sum(Colonial, na.rm = T),
-            InCountry= sum(InCountry, na.rm = T),
-            other = sum(other, na.rm = T)) |>
-  mutate(perc_Zcountry = InCountry/(InCountry+other+Colonial)) |>
-  mutate(perc_colonial = Colonial/(InCountry+other+Colonial)) |>
-  mutate(perc_other = other/(InCountry+other+Colonial)) |>
-  dplyr::select(countrycode, colonial_dates, perc_Zcountry, perc_colonial, perc_other) |>
-  pivot_longer(-c(countrycode, colonial_dates)) |> mutate(value = ifelse(colonial_dates == "colonial", value *-1, value)) |>
-  ggplot(aes(x = countrycode, y = value, fill = name)) + 
-  scale_fill_manual(values = c("darkblue", "lightgrey", "#E69F00"))+
-  geom_col() + 
-  coord_flip() +
-  theme_minimal() + 
-  facet_wrap(~colonial_dates, scales = "free") 
-
-ggsave("plots/colonial_bar.png", height = 6, width = 5.5)
-
-colonial_map |> filter(countrycode %in% c("BJ", "SY", "NE")) |>
-  filter(countrycode %in% countries_to_plot$countrycode) |>
-  group_by(countrycode, colonial_dates, year) |>
-  summarise( Colonial = sum(Colonial, na.rm = T),
-            InCountry= sum(InCountry, na.rm = T),
-            other = sum(other, na.rm = T)) |>
-  # mutate(perc_Zcountry = InCountry/(InCountry+other+Colonial)) |>
-  # mutate(perc_colonial = Colonial/(InCountry+other+Colonial)) |>
-  # mutate(perc_other = other/(InCountry+other+Colonial)) |>
-  # dplyr::select(year, perc_Zcountry, perc_colonial, perc_other) |>
-  pivot_longer(-c(year, countrycode, colonial_dates))|>
-  ggplot(aes(x = year, y = value, color = name)) + geom_line() +
-  scale_color_manual(values = c("darkblue", "#E69F00",  "grey")) + 
-  theme_classic() + theme(legend.position = "none") +
-  labs(y = "number observations") + facet_grid(rows = vars(countrycode), scales = "free")
-
-
-ggsave("plots/colonial_ex_all.png", height = 5, width = 3)
-
-```
-
-```{r}
-world <- ne_countries(scale = "medium", returnclass = "sf") |>select(iso_a2,continent) |> #st_transform(crs = "+proj=robin +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs") |> 
-  filter(continent != "Antarctica") |> 
-  rename(countrycode = iso_a2) |> dplyr::select(countrycode, geometry)
-
-```
-
-```{r}
-country_year_summary |> 
-  group_by(countrycode) |>
-  summarise(n = sum(n)) |> 
-  left_join(world) |>
-  ggplot() +
-  geom_sf(aes(geometry = geometry, fill = log(n))) +
-  theme_map() + theme(legend.position = c(0.1, 0.1)) +
-  labs(title = "B. Observations per country")
-
-ggsave("plots/observations_map.png")
-```
-
-```{r}
-country_year_summary |> 
-  group_by(publishing_country) |>
-  summarise(n = sum(n)) |> 
-  rename(countrycode = publishing_country) |>
-  left_join(world) |>
-  ggplot() +
-  geom_sf(aes(geometry = geometry, fill = log(n))) +
-  theme_map() + theme(legend.position = c(0.1, 0.1)) +
-  labs(title = "B. Data publishing per country")
-ggsave("plots/publisher_map.png")
-
-```
-
-# Flow map:
+Panel A - Maps
 
 ```{r}
 world <- ne_countries(scale = "medium", returnclass = "sf") |> dplyr::select(iso_a2,continent) |> 
@@ -600,89 +202,13 @@ pub_country <- as_tibble(centroids) |> bind_cols(centroids_df) |> dplyr::select(
   rename(travellat = Y, travellon = X, publishing_country = iso_a2)
 ```
 
-#homelat <dbl> homelon <dbl> homecontinent <chr> travellat <dbl> travellon, travelcontinent <chr> n
-
 ```{r}
-summary <- country_year_summary |>
+main_colonizers <- c("GB",  "PT", "BE", "DE", "ES", "NL")
+
+summary <- country_year_summary |> filter(publishing_country %in% main_colonizers) |>
   left_join(colonial_ties) |> drop_na() |>
   mutate(analysis = ifelse(name == publishing_country , "Colonial",
-                                ifelse(countrycode == publishing_country, "InCountry",
-                                  "other"))) |>
-  mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  ) |>
-  group_by(countrycode, publishing_country, analysis) |>
-  summarise(n = sum(n, na.rm = T)) |>
-  filter(countrycode!=publishing_country) |>
-  left_join(obs_country) |> left_join(pub_country |> dplyr::select(-continent)) |>
-  dplyr::select(-c(countrycode, publishing_country)) |> dplyr::select(-countrycode)
-
-summary_all <- country_year_summary |>
-  group_by(countrycode, publishing_country) |>
-  summarise(n = sum(n, na.rm = T)) |>
-  filter(countrycode!=publishing_country) |>
-  left_join(obs_country) |> left_join(pub_country |> dplyr::select(-continent)) |>
-  dplyr::select(-c(countrycode)) |> dplyr::select(-countrycode) |> drop_na()
-```
-
-```{r}
-# A function that makes a dateframe per connection (we will use these connections to plot each lines)
-data_for_connection=function( dep_lon, dep_lat, arr_lon, arr_lat, group){
-  inter <- gcIntermediate(c(dep_lon, dep_lat), c(arr_lon, arr_lat), n=50, addStartEnd=TRUE, breakAtDateLine=F)             
-  inter=data.frame(inter)
-  inter$group=NA
-  diff_of_lon=abs(dep_lon) + abs(arr_lon)
-  if(diff_of_lon > 180){
-    inter$group[ which(inter$lon>=0)]=paste(group, "A",sep="")
-    inter$group[ which(inter$lon<0)]=paste(group, "B",sep="")
-  }else{
-    inter$group=group
-  }
-  return(inter)
-}
-library(geosphere)
-data_ready_plot=data.frame()
-for(i in c(1:nrow(summary_all))){
-  tmp=data_for_connection(summary_all$homelon[i], summary_all$homelat[i], summary_all$travellon[i], summary_all$travellat[i] , i)
-  tmp$homecontinent=summary_all$publishing_country[i]
-  tmp$n=summary_all$n[i]
-  data_ready_plot=rbind(data_ready_plot, tmp)
-}
-dim(data_ready_plot)
-```
-
-```{r}
-data_ready_plot |>
-  filter(n > 1000) |>
-  ggplot() + 
-  #annotation_custom(earth, xmax = 180, ymin = -Inf, ymax = Inf) +
-  geom_line(size=0.5, aes(x=lon, y=lat, group=group, alpha = log(n), size = n, color = homecontinent)) +
-  geom_sf(data = world, aes(geometry = geometry), alpha = 0.1) +
- # xlim(-170, 185)+ ylim(-59, 80) +
-  #scale_color_manual(values = c("#E69F00", "white", "red","black","#009E73", "#0072B2", "grey","#CC79A7")) +
-  theme_classic() +
-  theme(legend.position = "bottom",
-    #plot.margin = unit(rep(-1.25,4),"lines"),
-   # plot.background = element_rect(fill = "#00001C"),
-    #panel.background = element_rect(fill='#00001C',colour='#00001C' ),
-    panel.grid=element_blank(), 
-    panel.border = element_blank(),
-    axis.title=element_blank(),
-    axis.text=element_blank(),
-    axis.ticks=element_blank()
-  )  
-ggsave("plots/map-flows.png")
-```
-
-# flows pre and post colonization
-
-```{r}
-summary <- country_year_summary |>
-  left_join(colonial_ties) |> drop_na() |>
-  mutate(analysis = ifelse(name == publishing_country , "Colonial",
-                                ifelse(countrycode == publishing_country, "InCountry",
-                                  "other"))) |>
+                                ifelse(countrycode == publishing_country, "InCountry", "other"))) |>
   mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
   mutate(
     across(everything(), ~replace_na(.x, 0))
@@ -692,9 +218,7 @@ summary <- country_year_summary |>
   left_join(obs_country) |> left_join(pub_country |> dplyr::select(-continent)) |>
   dplyr::select(-c(countrycode)) |> dplyr::select(-countrycode) |> drop_na()
 
-```
 
-```{r}
 # A function that makes a dateframe per connection (we will use these connections to plot each lines)
 data_for_connection=function( dep_lon, dep_lat, arr_lon, arr_lat, group){
   inter <- gcIntermediate(c(dep_lon, dep_lat), c(arr_lon, arr_lat), n=50, addStartEnd=TRUE, breakAtDateLine=F)             
@@ -720,20 +244,17 @@ for(i in c(1:nrow(summary))){
   tmp$timing = summary$colonial_dates[i]
   data_ready_plot_pre_post=rbind(data_ready_plot_pre_post, tmp)
 }
-```
 
-```{r fig.height=10}
 world2 <- st_wrap_dateline(world, options = c("WRAPDATELINE=YES"))
 
 a <- data_ready_plot_pre_post |>
-  filter(timing != "colonial",
-        colonial == "Colonial", 
+  filter(colonial == "Colonial", 
          homecontinent != "Seven seas (open ocean)") |>
   ggplot() + 
   #annotation_custom(earth, xmax = 180, ymin = -Inf, ymax = Inf) +
   geom_line(size=0.5, aes(x=lon, y=lat, group=group,  size = log(n), color = homecontinent), lwd =1) +
   geom_sf(data = world2, aes(geometry = geometry), alpha = 0.1) +
-  scale_color_manual(values = c( "red","#E69F00",  "#CC79A7","#0072B2", "grey","#009E73",  "black")) +
+  scale_color_manual(values = c( "red","#E69F00",  "#CC79A7","#0072B2", "#009E73",  "black")) +
  xlim(-170, 185)+ ylim(-59, 80) +
   theme_classic() +
   theme(legend.position = "none",
@@ -747,288 +268,204 @@ a <- data_ready_plot_pre_post |>
     axis.ticks=element_blank()
   )  + facet_wrap(~homecontinent, ncol = 1)
 
-ggsave("plots/map-colonial_a.png")
-a
+ggsave("../figures/fig2A_maps.png", a, height = 10, width = 2, dpi = 300)
 ```
 
-```{r fig.height=10}
-
-b <- data_ready_plot_pre_post |>
-  filter(timing != "colonial",
-        colonial == "Colonial", 
-         homecontinent != "Seven seas (open ocean)") |>
-  ggplot() + 
-  #annotation_custom(earth, xmax = 180, ymin = -Inf, ymax = Inf) +
-  geom_line(size=0.5, aes(x=lon, y=lat, group=group,  size = log(n), color = homecontinent), lwd =1) +
-  geom_sf(data = world2, aes(geometry = geometry), alpha = 0.1) +
-  scale_color_manual(values = c( "red","#E69F00",  "#CC79A7","#0072B2", "grey","#009E73",  "black")) +
- xlim(-170, 185)+ ylim(-59, 80) +
-  theme_classic() +
-  theme(legend.position = "none",
-    #plot.margin = unit(rep(-1.25,4),"lines"),
-   # plot.background = element_rect(fill = "#00001C"),
-    #panel.background = element_rect(fill='#00001C',colour='#00001C' ),
-    panel.grid=element_blank(), 
-    panel.border = element_blank(),
-    axis.title=element_blank(),
-    axis.text=element_blank(),
-    axis.ticks=element_blank()
-  )  + facet_wrap(~homecontinent, ncol = 1)
-
-
-b
-ggsave("plots/map-colonial_b.png")
-```
+Panel A - Bars
 
 ```{r}
-world_map = map_data("world") %>% 
-  filter(! long > 180)
+colonial_ties_unique <- colonial_ties |> 
+  dplyr::select(-year) |> 
+  distinct() |> 
+  filter(countrycode != name)
 
-countries = world_map %>% 
-  distinct(region) %>% 
-  rowid_to_column() |>
-  mutate(countrycode= countrycode(region, origin = 'country.name', destination = 'iso2c')) |>
-  left_join(colonial_map)
+unique(colonial_ties$name)
+# Define main colonizer countries
+main_colonizers <- c("GB",  "PT", "BE", "DE", "ES", "NL")
 
-a<-countries |> filter(colonial_dates != "postcolonial") |>
+summary <- country_year_summary |>
+  left_join(colonial_ties_unique, by = "countrycode") |> #drop_na() |>
+  mutate(analysis = ifelse(name == publishing_country , "Colonial",
+                                ifelse(countrycode == publishing_country, "InCountry",
+                                  "other"))) |>
+  mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
+  filter(publishing_country %in% main_colonizers) |>
+  #mutate(
+  #  across(everything(), ~replace_na(.x, 0))
+  #) |> 
+  group_by(publishing_country, analysis, colonial_dates) |>
+  summarise(n = sum(n, na.rm = T)) 
+  #filter(countrycode!=publishing_country) |>
+  #left_join(obs_country) |> left_join(pub_country |> dplyr::select(-continent)) |>
+  #dplyr::select(-c(countrycode)) |> dplyr::select(-countrycode) |> drop_na()
+
+rr <- summary |> drop_na() |> filter(analysis != "other") |>
+  ggplot(aes(x = colonial_dates, fill = publishing_country, alpha = colonial_dates, y = n/1000)) + geom_col(position = "dodge") + facet_wrap(~publishing_country, scales = "free", ncol = 1) + 
+  scale_y_continuous(labels = label_number()) + 
+   scale_fill_manual(values = c( "red","#E69F00","#CC79A7","#0072B2", "#009E73",  "black")) + scale_alpha_manual(values = c(1, 0.4)) +
+  theme_classic() + theme(legend.position = "none") + labs(x = "", y = "# observations (10^3)") +theme(strip.text = element_blank()) + coord_flip()
+ggsave("../figures/Fig2A_bar.png", rr, height = 7, width = 2.5, dpi = 300)
+```
+
+Panel B
+
+```{r}
+colonial_map <- country_year_summary |> left_join(colonial_ties) |> drop_na() |>
+  mutate(analysis = ifelse(name == publishing_country , "Colonial",
+                                ifelse(countrycode == publishing_country, "InCountry",
+                                  "other"))) |>
+  mutate(colonial_dates = ifelse(year<= end, "colonial", "postcolonial")) |>
+  group_by(analysis, countrycode, colonial_dates, year) |>
+  summarize(n = sum(n)) |>
+  pivot_wider(names_from = analysis, values_from = n) |>
   mutate(
     across(everything(), ~replace_na(.x, 0))
   ) |>
-  ggplot(aes(fill = perc_incountry, map_id = region)) +
-  geom_map(map = world_map) +
-  expand_limits(x = world_map$long, y = world_map$lat) +
-  coord_map("moll") +
-  theme_map()
-
-library(patchwork)
-a/b
-```
-
-# Singapore
-
-```{r}
-country_year_sg <-  gbif |>
-  filter(countrycode == "SG") |>
-  count(countrycode, year, kingdom, class, datasetkey, basisofrecord) |>
-  collect() |> left_join(orgs) |>
-  mutate(CS = ifelse(title %in% c("iNaturalist Research-grade Observations", "EOD – eBird Observation Dataset"), "citizen science", "other")) |>
-  mutate(incountry = ifelse(publishing_country == "SG", "SG", "Other")) 
-```
-
-```{r fig.width= 4, fig.height= 5, dpi =300}
-country_year_sg |> filter(basisofrecord %in% c("PRESERVED_SPECIMEN", "HUMAN_OBSERVATION")) |>
-  group_by(basisofrecord, CS) |>
-  summarise(n = sum(n)) |> drop_na() |>
-  ggplot(aes(x= basisofrecord, y = n, fill = CS)) + geom_col()  + 
-  theme_classic() + scale_fill_brewer() +
-  theme(legend.position = c(0.8,0.8), legend.title = element_blank(),
-        axis.title.x = element_blank()) + ylab("number of observations") 
-  
-```
-
-```{r fig.width= 4, fig.height= 5, dpi =300}
-country_year_sg |> filter(basisofrecord %in% c("PRESERVED_SPECIMEN", "HUMAN_OBSERVATION")) |># filter(kingdom == "Animalia") |>
-  group_by(kingdom, class, basisofrecord) |>
-  summarise(n = sum(n)) |> drop_na() |> filter(n >4000) |>
-  ggplot(aes(x= reorder(class,n), y = n, fill = basisofrecord)) + geom_col()  + 
-  theme_classic() + scale_fill_brewer() +
-  theme(legend.position = c(0.5,0.2), legend.title = element_blank(),
-        axis.title.y = element_blank()) + ylab("number of observations") + coord_flip()
+  group_by(year, colonial_dates, countrycode) |>
+  summarise( Colonial = sum(Colonial, na.rm = T),
+            InCountry= sum(InCountry, na.rm = T),
+            other = sum(other, na.rm = T),
+            total = Colonial+InCountry+other)
 ```
 
 ```{r}
-country_year_sg |> filter(basisofrecord %in% c("PRESERVED_SPECIMEN", "HUMAN_OBSERVATION")) |>
-  group_by(kingdom, class, basisofrecord, incountry) |> filter(incountry == "SG") |>
-  summarise(n = sum(n)) |> drop_na() |> filter(n >10) |>
-  ggplot(aes(x= reorder(class,n), y = n, fill = basisofrecord)) + geom_col()  + 
-  theme_classic() + scale_fill_brewer() +
-  theme(legend.position = c(0.8,0.2), legend.title = element_blank(),
-        axis.title.y = element_blank()) + ylab("number of observations") + coord_flip()
+unique(colonial_map$countrycode)
+figure2b <- colonial_map |> filter(countrycode %in% c("CD", "RW")) |>
+  group_by(countrycode, colonial_dates) |>
+  summarise( Colonial = sum(Colonial, na.rm = T),
+            InCountry= sum(InCountry, na.rm = T),
+            other = sum(other, na.rm = T)) |>
+  mutate(perc_incountry = InCountry/(InCountry+other+Colonial)) |>
+  mutate(perc_colonial = Colonial/(InCountry+other+Colonial)) |>
+  mutate(perc_other = other/(InCountry+other+Colonial)) |>
+  pivot_longer(c(perc_incountry:perc_other)) |>
+  mutate(value = value*100) |>
+  ggplot(aes( y = value,x = colonial_dates, fill = name)) +
+  geom_col(position = "dodge") + theme_classic() +
+  labs(y = "percent of observations", x = "") +
+  scale_alpha_manual(values = c(0.3, 1)) +
+  scale_fill_manual(values = c("darkblue",  "#E69F00", "lightgrey")) +
+  facet_grid(rows = vars(countrycode))
 
+ggsave("../figures/Fig2B.png", figure2b, height = 4, width = 4, dpi = 300)
 ```
 
-# Netherlands
+### Figure 3
+
+Panel A
 
 ```{r}
-country_year_nl <-  gbif |>
-  filter(countrycode == "NG") |>
-  count(countrycode, year, class, datasetkey) |>
-  collect() |> left_join(orgs)
-```
+oecd_obs <- data.frame(
+  countrycode = c("AU", "AT", "BE", "CA", "CL", "CO", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", 
+           "HU", "IS", "IE", "IL", "IT", "JP", "KR", "LV", "LT", "LU", "MX", "NL", "NZ", 
+           "NO", "PL", "PT", "SK", "SI", "ES", "SE", "CH", "TR", "GB", "US"),
+  oecd_obs = "oecd"
+)
+oecd_pub <- data.frame(
+  publishing_country = c("AU", "AT", "BE", "CA", "CL", "CO", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", 
+           "HU", "IS", "IE", "IL", "IT", "JP", "KR", "LV", "LT", "LU", "MX", "NL", "NZ", 
+           "NO", "PL", "PT", "SK", "SI", "ES", "SE", "CH", "TR", "GB", "US"),
+  oecd_pub = "oecd"
+)
 
-```{r}
-country_year_summary |> 
-  filter(countrycode == "NG") |>
-  mutate(incountry = ifelse(publishing_country == "NG", "NG", "Other")) |>
-  group_by(year,incountry ) |> drop_na() |>
-  summarise(n = sum(n)) |> filter(year >1950) |>
-  ggplot(aes(x = year, y = log(n), col = incountry)) + geom_line() + 
-  theme_classic() 
-ggsave("plots/NG/timeseries.png")
-```
 
-```{r}
-country_year_nl |> group_by(class) |> mutate(classn = sum(n)) |> filter(classn >1000) |>
-  group_by(class, CS) |>
-  summarise(n = sum(n))  |> drop_na() |>
-  ggplot(aes(x = class, y = n)) +
-  geom_col() + coord_flip() + 
-  theme_classic() + facet_wrap(~CS, scales = "free_x")  + 
-  theme(axis.title.y = element_blank(),
-        axis.title.x = element_blank())
+country_year_oecd <- country_year_summary |> left_join(oecd_obs) |> left_join(oecd_pub) |>
+  mutate(oecd_pub = replace_na(oecd_pub, "non-oecd"),
+         oecd_obs = replace_na(oecd_obs, "non-oecd"))
 
-ggsave("plots/NG/taxonomy.png")
-```
-
-# Data flows
-
-### data publishers
-
-```{r}
-summary <- country_year_summary |>
-  drop_na() |>
-  filter(publishing_country %in% c("NL", "NG", "US", "SG", "CO", "BJ", "IN", "GB", "BW")) |>
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  ) |> group_by(countrycode, publishing_country) |>
-  summarise(n = sum(n, na.rm = T)) |>
-  filter(countrycode!=publishing_country) |>
-  left_join(obs_country) |> left_join(pub_country |> dplyr::select(-continent)) |>
-  dplyr::select(-c(countrycode)) |>select(-countrycode) |> drop_na()
-
-data_for_connection=function( dep_lon, dep_lat, arr_lon, arr_lat, group){
-  inter <- gcIntermediate(c(dep_lon, dep_lat), c(arr_lon, arr_lat), n=50, addStartEnd=TRUE, breakAtDateLine=F)             
-  inter=data.frame(inter)
-  inter$group=NA
-  diff_of_lon=abs(dep_lon) + abs(arr_lon)
-  if(diff_of_lon > 180){
-    inter$group[ which(inter$lon>=0)]=paste(group, "A",sep="")
-    inter$group[ which(inter$lon<0)]=paste(group, "B",sep="")
-  }else{
-    inter$group=group
-  }
-  return(inter)
-}
-library(geosphere)
-# Création d'un dataframe complet avec les points de toutes les lignes à faire.
-data_ready_plot_SG = data.frame()
-for(i in c(1:nrow(summary))){
-  tmp=data_for_connection(summary$homelon[i], summary$homelat[i], summary$travellon[i], summary$travellat[i] , i)
-  tmp$n=summary$n[i]
-  tmp$co = summary$publishing_country[i]
-  data_ready_plot_SG=rbind(data_ready_plot_SG, tmp)
-}
-
-data_ready_plot_SG |>
-  ggplot() + 
-  #annotation_custom(earth, xmax = 180, ymin = -Inf, ymax = Inf) +
-  geom_line(size=0.5, aes(x=lon, y=lat,alpha = log(n), group=group), color = "maroon") +
-  geom_sf(data = world, aes(geometry = geometry), alpha = 0.1) +
-  scale_color_manual(values = c("#0072B2")) +
- # xlim(-170, 185)+ ylim(-59, 80) +
+line_oecd <- country_year_oecd |> group_by(oecd_pub, oecd_obs, year) |> summarise(n = sum(n, na.rm = T)) |> filter(year >1900 & year <2023) |>
+  ggplot(aes(x = year, y =  log(n), color = oecd_pub, linetype = oecd_obs)) + geom_line() + scale_color_brewer(palette = "Set1") +  # Use a colorblind-friendly palette
+  scale_linetype_manual(values = c("dashed", "solid")) +  # Ensure clear distinction
   theme_classic() +
-  theme(legend.position = "none",
-    #plot.margin = unit(rep(-1.25,4),"lines"),
-   # plot.background = element_rect(fill = "#00001C"),
-    #panel.background = element_rect(fill='#00001C',colour='#00001C' ),
-    panel.grid=element_blank(), 
-    panel.border = element_blank(),
-    axis.title=element_blank(),
-    axis.text=element_blank(),
-    axis.ticks=element_blank()
-  )  +  facet_grid(rows = vars(co))
+  labs(x = "year", y = "number of observations", color = "publication location", linetype = "observation location")  +
+  theme(
+    legend.position = c(0.3,0.6),
+    legend.box = "rect",   # Adds a box around the legend
+    legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5),  # Box with black border
+    legend.margin = margin(5, 5, 5, 5)  # Add some spacing
+  )
 
-ggsave("plots/data-published.png", width = 3, height = 6)
+ggsave("../figures/Fig3A.png", line_oecd, width = 4, height = 4, dpi = 300)
 ```
 
-### Data Published
+Panel B
 
 ```{r}
-summary <- country_year_summary |>
-  drop_na() |>
-  filter(countrycode %in% c("NL", "NG", "US", "SG", "CO", "BJ", "IN", "GB", "BW")) |>
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  ) |> group_by(countrycode, publishing_country) |>
-  summarise(n = sum(n, na.rm = T)) |>
-  filter(countrycode!=publishing_country) |>
-  left_join(obs_country) |> left_join(pub_country |> dplyr::select(-continent)) |> drop_na()
+# Load world map and transform to Robinson projection
+world <- ne_countries(scale = "medium", returnclass = "sf") |> 
+  st_transform(crs = "+proj=robin")  
 
-data_for_connection=function( dep_lon, dep_lat, arr_lon, arr_lat, group){
-  inter <- gcIntermediate(c(dep_lon, dep_lat), c(arr_lon, arr_lat), n=50, addStartEnd=TRUE, breakAtDateLine=F)             
-  inter=data.frame(inter)
-  inter$group=NA
-  diff_of_lon=abs(dep_lon) + abs(arr_lon)
-  if(diff_of_lon > 180){
-    inter$group[ which(inter$lon>=0)]=paste(group, "A",sep="")
-    inter$group[ which(inter$lon<0)]=paste(group, "B",sep="")
-  }else{
-    inter$group=group
-  }
-  return(inter)
-}
-library(geosphere)
-# Création d'un dataframe complet avec les points de toutes les lignes à faire.
-data_ready_plot_SG = data.frame()
-for(i in c(1:nrow(summary))){
-  tmp=data_for_connection(summary$homelon[i], summary$homelat[i], summary$travellon[i], summary$travellat[i] , i)
-  tmp$n=summary$n[i]
-  tmp$co = summary$countrycode[i]
-  data_ready_plot_SG=rbind(data_ready_plot_SG, tmp)
-}
+# List of OECD countries (ISO 2-letter codes)
+oecd_countries <- c("AU", "AT", "BE", "CA", "CL", "CO", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", 
+                    "IS", "IE", "IL", "IT", "JP", "KR", "LV", "LT", "LU", "MX", "NL", "NZ", "NO", "PL",
+                    "PT", "SK", "SI", "ES", "SE", "CH", "TR", "GB", "US")
 
-data_ready_plot_SG |>
-  ggplot() + 
-  #annotation_custom(earth, xmax = 180, ymin = -Inf, ymax = Inf) +
-  geom_line(size=0.5, aes(x=lon, y=lat,alpha = log(n), group=group), color = "#0072B2") +
-  geom_sf(data = world, aes(geometry = geometry), alpha = 0.1) +
-  scale_color_manual(values = c("#0072B2")) +
- # xlim(-170, 185)+ ylim(-59, 80) +
-  theme_classic() +
-  theme(legend.position = "none",
-    #plot.margin = unit(rep(-1.25,4),"lines"),
-   # plot.background = element_rect(fill = "#00001C"),
-    #panel.background = element_rect(fill='#00001C',colour='#00001C' ),
-    panel.grid=element_blank(), 
-    panel.border = element_blank(),
-    axis.title=element_blank(),
-    axis.text=element_blank(),
-    axis.ticks=element_blank()
-  )  +  facet_grid(rows = vars(co))
+gbif_nodes <- read_csv("../data/Updated_Country_List_with_ISO_A2.csv")
 
-ggsave("plots/data-publishers.png", width = 3, height = 6)
+# Assign OECD status
+gbif_nodes <- gbif_nodes %>%
+  mutate(OECD_Status = ifelse(ISO_A2 %in% oecd_countries, "OECD", "Non-OECD"))
+
+# Get coordinates of country centroids
+world_centroids <- world %>%
+  st_centroid() %>%
+  mutate(longitude = st_coordinates(.)[,1], latitude = st_coordinates(.)[,2]) %>%
+  dplyr::select(iso_a2, longitude, latitude)
+
+# Merge GBIF nodes with coordinates
+gbif_nodes <- gbif_nodes %>% rename(iso_a2 = ISO_A2) |>
+  left_join(world_centroids)
+
+# Plot the map
+map_nodes <- ggplot() +
+  geom_sf(data = world, fill = "gray90", color = "white") +  # Base world map
+  geom_point(data = gbif_nodes, aes(x = longitude, y = latitude, color = OECD_Status, shape = Membership), 
+             size = 2, alpha = 0.9) +  
+  scale_color_brewer(palette = "Set1") +# GBIF Nodes
+  #scale_color_manual(values = c("OECD" = "blue", "Non-OECD" = "red")) +  # Colors
+  labs(
+       x = "", y = "", color = "") +
+  theme_map() +
+  theme(legend.position = "bottom",
+        legend.box = "rect",
+        legend.background = element_rect(fill = "white", color = "black"),
+        panel.grid = element_blank())
+
+ggsave("../figures/Fig3B.png", map_nodes, width = 4, height = 4, dpi = 300)
+```
+
+### Figure 4
+
+```{r}
+unzip("../data/V-Dem-CY-Core-v15_csv.zip")
+vdem <- read_csv("../scripts/V-Dem-CY-Core-v15_csv/V-Dem-CY-Core-v15.csv") |>
+   dplyr::select(country_text_id, year, v2x_freexp,v2xcl_dmove, v2x_regime) |>
+  mutate(countrycode = countrycode(country_text_id, origin = "iso3c", destination = "iso2c")) |> dplyr::select(-country_text_id)
 ```
 
 ```{r}
-country_year_summary |>
-  drop_na() |>
-  filter(countrycode %in% c("NL", "NG", "US", "SG", "CO", "BJ", "IN", "GB", "BW")) |>
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  ) |> group_by(countrycode, CS) |>
-  summarise(n = sum(n, na.rm = T)) |> group_by(countrycode) |> mutate(all = sum(n),
-                                                                      perc = n/all*100) |>
-  
-  ggplot(aes(x = "", y = perc, fill = CS)) + 
-  facet_grid(rows = vars(countrycode)) + theme_classic() + scale_fill_manual(values = c("black", "grey")) + geom_bar(stat="identity", width=1, color="white") + theme(legend.position = "none") +
-  coord_polar("y", start=0) + theme_void() # remove background, grid, numeric labels
-ggsave("plots/data-type-obs.png", width = 3, height = 6) 
+scatter_plot <- country_year_summary |>
+  left_join(vdem) |> filter(year >1900) |> drop_na() |>
+  group_by(countrycode, year) |> summarise(n = sum(n),
+                                        v2x_freexp = mean(v2x_freexp),
+                                        v2xcl_dmove = mean(v2xcl_dmove),
+                                        v2x_regime = mean(v2x_regime)) |>
+    mutate(v2x_regime = as.factor(v2x_regime),
+          v2x_regime = recode(v2x_regime,"0" = "Closed autocracy", "1" = "Electoral autocracy", "2"= "Electoral democracy", "3"= "Liberal democracy")) |>
+  ggplot(aes(x = v2x_freexp, y = log(n), color = year)) +
+  geom_point(alpha = 0.4, size = 2) + 
+  geom_smooth(method = "loess", color = "black", se = FALSE) +
+  scale_color_viridis_c(option = "magma") + 
+  theme_bw() +
+  labs(
+    x = "Freedom of Expression Index",
+    y = "log(# observations)",
+    color = "Year",
+  ) + scale_x_continuous(
+    breaks = function(x) pretty(x, n = 5), 
+    labels = function(x) ifelse(x == 0, "0", sprintf("%.1f", x))
+  ) +
+  facet_wrap(~v2x_regime, ncol = 4)
+ggsave("../figures/Fig4.png", scatter_plot, dpi = 300, width = 8, height = 3.5)
 ```
 
-```{r}
-country_year_summary |>
-  drop_na() |>
-  filter(publishing_country %in% c("NL", "NG", "US", "SG", "CO", "BJ", "IN", "GB", "BW") ) |>
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  ) |> group_by(publishing_country, CS) |>
-  summarise(n = sum(n, na.rm = T)) |> group_by(publishing_country) |> mutate(all = sum(n),
-                                                                      perc = n/all*100) |>
-  
-  ggplot(aes(x = "", y = perc, fill = CS)) + 
-  facet_grid(rows = vars(publishing_country)) + theme_classic() + scale_fill_manual(values = c("black", "grey")) + geom_bar(stat="identity", width=1, color="white") + theme(legend.position = "none") +
-  coord_polar("y", start=0) +   theme_void() # remove background, grid, numeric labels
-ggsave("plots/data-type-publisher.png", width = 3, height = 6) 
-```
-
-# 
